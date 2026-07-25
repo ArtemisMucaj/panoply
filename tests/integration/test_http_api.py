@@ -132,11 +132,11 @@ class TestServerToggle:
         assert response.status_code == 404
         assert "not found" in response.json()["error"]
 
-    def test_a_missing_body_is_a_400(self, client: TestClient) -> None:
-        """The caller can fix this by sending a body, so it isn't a 500."""
+    def test_a_missing_body_is_a_422(self, client: TestClient) -> None:
+        """Request validation is FastAPI's, so it uses FastAPI's shape."""
         response = client.post("/api/servers/alpha/toggle")
-        assert response.status_code == 400
-        assert response.json()["error"] == "request body must be valid JSON"
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "missing"
 
     def test_a_corrupt_config_is_a_500(self, client, servers_json: Path) -> None:
         servers_json.write_text("{ not json")
@@ -189,8 +189,10 @@ class TestToolToggle:
 
     def test_a_body_missing_keys_names_the_field(self, client: TestClient) -> None:
         response = client.post("/api/tools/toggle", json={})
-        assert response.status_code == 400
-        assert response.json()["error"] == "missing required field 'server'"
+        assert response.status_code == 422
+        missing = {tuple(item["loc"]) for item in response.json()["detail"]}
+        assert ("body", "server") in missing
+        assert ("body", "tool") in missing
 
 
 class TestPresets:
@@ -214,8 +216,8 @@ class TestPresets:
 
     def test_creating_without_a_path_names_the_field(self, client: TestClient) -> None:
         response = client.post("/api/presets", json={"name": "only"})
-        assert response.status_code == 400
-        assert response.json()["error"] == "missing required field 'filePath'"
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "filePath"]
 
     def test_updating_renames(self, client, data_dir: Path) -> None:
         created = self._create(client, data_dir, "a")
@@ -226,14 +228,14 @@ class TestPresets:
     def test_updating_an_unknown_preset_is_a_404(self, client: TestClient) -> None:
         assert client.patch("/api/presets/nope", json={"name": "x"}).status_code == 404
 
-    def test_updating_with_a_corrupt_body_is_a_400(self, client, data_dir) -> None:
+    def test_updating_with_a_corrupt_body_is_a_422(self, client, data_dir) -> None:
         created = self._create(client, data_dir, "p")
         response = client.patch(
             f"/api/presets/{created['id']}",
             content=b"{ not json",
             headers={"content-type": "application/json"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_deleting(self, client, data_dir: Path) -> None:
         created = self._create(client, data_dir, "d")
@@ -356,28 +358,40 @@ class TestHotSwapNotifications:
 
 
 class TestErrorModel:
-    """Every response is JSON with the same error key — including Starlette's own."""
+    """Two shapes, split on whose fault it is.
 
-    def test_an_unknown_route_is_json(self, client: TestClient) -> None:
+    Request validation is FastAPI's `422 {"detail": [...]}`; everything Panoply
+    itself rejects or fails at is `{"error": "..."}`.
+    """
+
+    def test_an_unknown_route_uses_the_error_shape(self, client: TestClient) -> None:
         response = client.get("/api/nope")
         assert response.status_code == 404
         assert response.headers["content-type"].startswith("application/json")
         assert response.json() == {"error": "Not Found"}
 
-    def test_a_wrong_method_is_json(self, client: TestClient) -> None:
+    def test_a_wrong_method_uses_the_error_shape(self, client: TestClient) -> None:
         response = client.delete("/api/config")
         assert response.status_code == 405
         assert response.json() == {"error": "Method Not Allowed"}
 
-    def test_a_non_object_body_is_rejected(self, client: TestClient) -> None:
+    def test_a_non_object_body_is_a_validation_error(self, client: TestClient) -> None:
         response = client.put("/api/config", json=[1, 2, 3])
+        assert response.status_code == 422
+        assert "detail" in response.json()
+
+    def test_a_rejected_path_uses_the_error_shape(self, client, tmp_path: Path) -> None:
+        """Containment is Panoply's own rule, not schema validation."""
+        response = client.get(f"/api/config?path={tmp_path / 'evil.json'}")
         assert response.status_code == 400
-        assert response.json()["error"] == "request body must be a JSON object"
+        assert "must be a .json file" in response.json()["error"]
 
     def test_server_side_failures_stay_500(self, client, servers_json: Path) -> None:
         """A corrupt file on disk is ours to fix, not the caller's."""
         servers_json.write_text("{ not json")
-        assert client.get("/api/config").status_code == 500
+        response = client.get("/api/config")
+        assert response.status_code == 500
+        assert "error" in response.json()
 
 
 class TestRoundTrip:

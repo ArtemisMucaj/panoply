@@ -121,17 +121,46 @@ Panoply-only keys, which are stripped before the entry reaches FastMCP:
 
 ## The published API contract
 
-`openapi.yaml` at the repo root documents the management API and is what other
-projects integrate against. **Changing a route means changing that file in the
-same commit** — `tests/integration/test_openapi.py` fails both ways round: an
-undocumented route, and a documented route that doesn't exist.
+The management API is **FastAPI**, so `openapi.yaml` is a generated artifact,
+not a source file. Never hand-edit it:
 
-The error model is uniform and worth keeping that way: every response is JSON,
-every error is `{"error": "..."}`. `400` means the caller can fix it (raise
-`HTTPException` via `json_object_body` / `required`), `404` means a missing
-aggregate (raise a domain `NotFound`), and `500` is reserved for Panoply's own
-failures. Starlette's built-in 404/405 are rendered through the same shape by
-the `json_error` handler, so an integrator never has to sniff a content type.
+```bash
+uv run python scripts/dump_openapi.py          # regenerate after a route change
+uv run python scripts/dump_openapi.py --check  # what CI runs
+```
+
+The source of truth is `connector/http/api.py` (routes, docstrings, per-route
+`responses`) and `connector/http/models.py` (Pydantic bodies). A docstring there
+is what an integrator reads. A running server also serves it at
+`/openapi.json`, with browsable docs at `/docs`.
+
+`tests/integration/test_openapi.py` fails if the committed file differs from
+what the app generates, and separately asserts documented shapes against live
+responses.
+
+Two things to preserve when touching this layer:
+
+- **Every route sets `operation_id`.** FastAPI's default is
+  `health_api_health_get`, which becomes the method name in a generated client.
+- **`GET /api/config` must not use `response_model`.** Serialising the document
+  through `Configuration` stamps every absent optional field in as `null`,
+  breaking the documented verbatim read-back. It documents its 200 via
+  `responses` and sets `response_model=None`; a test pins this.
+
+### Error model
+
+Two shapes, split on whose fault it is:
+
+| Status | Body | Raised by |
+|---|---|---|
+| `422` | `{"detail": [...]}` | FastAPI request validation — missing or ill-typed fields |
+| `400` | `{"error": "..."}` | `HTTPException` from our own checks (the `path` containment rule) |
+| `404` | `{"error": "..."}` | a domain `NotFound`, plus Starlette's unknown-route |
+| `500` | `{"error": "..."}` | `PanoplyError` / `ValueError` / `OSError` handlers |
+
+The 500 handlers are registered per exception type rather than on bare
+`Exception` on purpose: a genuinely unexpected bug should still surface as a
+traceback instead of being flattened into a tidy 500.
 
 ## Commit style
 

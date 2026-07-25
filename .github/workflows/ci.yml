@@ -19,6 +19,8 @@ jobs:
           python-version: "3.11"
       - name: Run pytest
         run: uv run --group dev pytest tests
+      - name: Check openapi.yaml is current
+        run: uv run --group dev python scripts/dump_openapi.py --check
 
   # Builds the same binaries the release workflow does, on the same runners, so
   # a PyInstaller break is caught on the PR instead of blocking a release.

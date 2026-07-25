@@ -90,8 +90,10 @@ Running with `--http PORT` also serves a REST API on `PORT + 1` for reading and
 editing the catalog, probing backends, and switching presets. Edits apply to the
 running proxy immediately — connected clients keep their sessions.
 
-It is documented in **[openapi.yaml](openapi.yaml)**, which is what to generate a
-client from. In short:
+It is documented in **[openapi.yaml](openapi.yaml)** — generated from the code,
+so it can't drift — which is what to generate a client from. A running server
+also serves it at `/openapi.json`, with browsable docs at
+`http://127.0.0.1:PORT+1/docs`. In short:
 
 | | |
 |---|---|

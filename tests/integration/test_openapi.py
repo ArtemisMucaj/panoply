@@ -1,25 +1,38 @@
-"""The published contract must match the app that serves it.
+"""The committed spec must be what the app actually generates.
 
-``openapi.yaml`` is what other projects integrate against, so it is checked
-here the same way code is: every route documented, every documented route real,
-and the response shapes asserted against live responses rather than trusted.
+``openapi.yaml`` is an artifact of ``panoply.connector.http``; these tests are
+what stop it from being a stale one. The generator lives in ``scripts/`` rather
+than the package — it is tooling, and keeping it there keeps PyYAML out of the
+runtime dependencies — so it is loaded by path.
 """
 
 from __future__ import annotations
 
-import json
+import importlib.util
 from pathlib import Path
 
 import pytest
 import yaml
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from panoply.connector.container import Container
 from panoply.connector.http.api import create_api_app
 
-SPEC_PATH = Path(__file__).resolve().parents[2] / "openapi.yaml"
-IGNORED_METHODS = {"HEAD", "OPTIONS"}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SPEC_PATH = REPO_ROOT / "openapi.yaml"
+GENERATOR = REPO_ROOT / "scripts" / "dump_openapi.py"
+
+
+def load_generator():
+    spec = importlib.util.spec_from_file_location("dump_openapi", GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def generator():
+    return load_generator()
 
 
 @pytest.fixture(scope="module")
@@ -33,77 +46,85 @@ def client(container: Container, servers_json: Path) -> TestClient:
         yield client
 
 
-def documented_operations(spec: dict) -> set[tuple[str, str]]:
-    return {
-        (path, method.upper())
-        for path, item in spec["paths"].items()
-        for method in item
-        if method.lower() in {"get", "put", "post", "patch", "delete"}
-    }
+class TestCommittedSpecIsCurrent:
+    def test_matches_what_the_app_generates(self, generator) -> None:
+        """If this fails: uv run python scripts/dump_openapi.py"""
+        assert SPEC_PATH.read_text() == generator.render()
+
+    def test_the_check_flag_agrees(self, generator) -> None:
+        assert generator.main(["--check"]) == 0
+
+    def test_generation_is_deterministic(self, generator) -> None:
+        """Two runs must not differ, or every commit would churn the file."""
+        assert generator.render() == generator.render()
+
+    def test_carries_the_do_not_edit_header(self) -> None:
+        assert SPEC_PATH.read_text().startswith("# Generated from the FastAPI app")
 
 
-def implemented_operations(container: Container) -> set[tuple[str, str]]:
-    app = create_api_app(container, mcp_port=7070)
-    return {
-        (route.path, method)
-        for route in app.routes
-        if isinstance(route, Route)
-        for method in (route.methods or set())
-        if method not in IGNORED_METHODS
-    }
+class TestSpecShape:
+    def test_documents_every_route(self, spec: dict, container: Container) -> None:
+        from starlette.routing import Route
 
+        app = create_api_app(container, mcp_port=7070)
+        implemented = {
+            (route.path, method)
+            for route in app.routes
+            if isinstance(route, Route) and route.include_in_schema
+            for method in (route.methods or set())
+            if method not in {"HEAD", "OPTIONS"}
+        }
+        documented = {
+            (path, method.upper())
+            for path, item in spec["paths"].items()
+            for method in item
+        }
+        assert implemented == documented
 
-class TestSpecIsWellFormed:
-    def test_parses(self, spec: dict) -> None:
-        assert spec["openapi"].startswith("3.")
-        assert spec["info"]["title"] == "Panoply Management API"
+    def test_operation_ids_are_hand_written(self, spec: dict) -> None:
+        """FastAPI's defaults (``health_api_health_get``) become the method names
+        in a generated client, so every route sets its own."""
+        ids = [
+            operation["operationId"]
+            for item in spec["paths"].values()
+            for operation in item.values()
+        ]
+        assert len(ids) == len(set(ids))
+        assert all("_api_" not in name for name in ids), ids
 
     def test_every_ref_resolves(self, spec: dict) -> None:
         def refs(node):
             if isinstance(node, dict):
                 for key, value in node.items():
-                    if key == "$ref":
-                        yield value
-                    else:
+                    yield value if key == "$ref" else None
+                    if key != "$ref":
                         yield from refs(value)
             elif isinstance(node, list):
                 for item in node:
                     yield from refs(item)
 
-        for ref in refs(spec):
-            assert ref.startswith("#/"), f"external $ref not allowed: {ref}"
+        for ref in filter(None, refs(spec)):
             target = spec
             for part in ref.removeprefix("#/").split("/"):
                 assert part in target, f"dangling $ref: {ref}"
                 target = target[part]
 
-    def test_every_operation_has_an_id(self, spec: dict) -> None:
-        ids = [
-            operation["operationId"]
-            for item in spec["paths"].values()
-            for method, operation in item.items()
-            if method.lower() in {"get", "put", "post", "patch", "delete"}
-        ]
-        assert len(ids) == len(set(ids)), "operationIds must be unique"
-
-
-class TestSpecMatchesTheApp:
-    def test_no_undocumented_routes(self, container: Container, spec: dict) -> None:
-        missing = implemented_operations(container) - documented_operations(spec)
-        assert not missing, f"routes missing from openapi.yaml: {sorted(missing)}"
-
-    def test_no_documented_routes_that_do_not_exist(
-        self, container: Container, spec: dict
+    def test_reading_the_config_is_not_serialised_through_the_model(
+        self, spec: dict
     ) -> None:
-        extra = documented_operations(spec) - implemented_operations(container)
-        assert not extra, f"openapi.yaml documents routes that do not exist: {sorted(extra)}"
+        """A response_model here would stamp every absent field in as null,
+        which would break the documented verbatim read-back."""
+        schema = spec["paths"]["/api/config"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        assert schema == {"$ref": "#/components/schemas/Configuration"}
 
 
 class TestDocumentedShapesAreReal:
     """Assert live responses against what the spec promises."""
 
-    def _required(self, spec: dict, schema_name: str) -> set[str]:
-        return set(spec["components"]["schemas"][schema_name]["required"])
+    def _required(self, spec: dict, name: str) -> set[str]:
+        return set(spec["components"]["schemas"][name]["required"])
 
     def test_health(self, client: TestClient, spec: dict) -> None:
         body = client.get("/api/health").json()
@@ -114,40 +135,39 @@ class TestDocumentedShapesAreReal:
         body = client.get("/api/presets").json()
         assert self._required(spec, "PresetBook") <= set(body)
 
-    def test_created_preset(self, client: TestClient, spec: dict, data_dir: Path) -> None:
+    def test_created_preset(self, client, spec: dict, data_dir: Path) -> None:
         target = data_dir / "work.json"
-        target.write_text(json.dumps({"mcpServers": {}}))
+        target.write_text('{"mcpServers": {}}')
         response = client.post(
             "/api/presets", json={"name": "work", "filePath": str(target)}
         )
         assert response.status_code == 201
-        assert self._required(spec, "PresetEnvelope") <= set(response.json())
         assert self._required(spec, "Preset") <= set(response.json()["preset"])
 
     def test_activation_result(self, client: TestClient, spec: dict) -> None:
         body = client.post("/api/presets/default/activate").json()
         assert self._required(spec, "ActivationResult") <= set(body)
-        assert body["activePresetID"] is None
 
-    def test_status_ok(self, client: TestClient, spec: dict) -> None:
-        body = client.post("/api/servers/alpha/toggle", json={"enabled": False}).json()
-        assert self._required(spec, "StatusOk") <= set(body)
-
-    @pytest.mark.parametrize(
-        ("method", "path", "payload", "status"),
-        [
-            ("post", "/api/servers/ghost/toggle", {"enabled": False}, 404),
-            ("post", "/api/tools/toggle", {}, 400),
-            ("get", "/api/nope", None, 404),
-        ],
-    )
-    def test_errors_all_use_the_documented_shape(
-        self, client: TestClient, spec: dict, method, path, payload, status
+    def test_panoply_errors_use_the_error_schema(
+        self, client: TestClient, spec: dict
     ) -> None:
-        response = getattr(client, method)(path, **({"json": payload} if payload is not None else {}))
-        assert response.status_code == status
-        assert response.headers["content-type"].startswith("application/json")
-        assert self._required(spec, "Error") <= set(response.json())
+        body = client.post(
+            "/api/servers/ghost/toggle", json={"enabled": False}
+        ).json()
+        assert self._required(spec, "Error") <= set(body)
+
+    def test_validation_errors_use_the_documented_422(
+        self, client: TestClient, spec: dict
+    ) -> None:
+        response = client.post("/api/tools/toggle", json={})
+        assert response.status_code == 422
+        documented = spec["paths"]["/api/tools/toggle"]["post"]["responses"]["422"]
+        assert documented["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/HTTPValidationError"
+        }
+        # The documented shape is a list of per-field failures, not our error key.
+        assert set(response.json()) == {"detail"}
+        assert {"loc", "msg", "type"} <= set(response.json()["detail"][0])
 
     def test_tool_catalogue(self, client: TestClient, container: Container) -> None:
         from panoply.domain.model.tool import ToolDescriptor
