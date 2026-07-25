@@ -1,0 +1,8 @@
+.venv/
+.tokens/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
