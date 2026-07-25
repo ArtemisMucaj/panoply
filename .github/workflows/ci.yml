@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches:
-      - '**'
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
 
@@ -20,22 +20,24 @@ jobs:
       - name: Run pytest
         run: uv run --group dev pytest tests
 
-  build-macos:
-    name: Build panoply binary (macOS arm64)
-    runs-on: macos-26
+  # Builds the same binaries the release workflow does, on the same runners, so
+  # a PyInstaller break is caught on the PR instead of blocking a release.
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            build_script: scripts/build_panoply_binary_linux.sh
+          - os: macos-14
+            build_script: scripts/build_panoply_binary.sh
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Build panoply binary
-        run: bash scripts/build_panoply_binary.sh
-
-  build-linux:
-    name: Build panoply binary (Linux x86_64)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-      - name: Build panoply binary
-        run: bash scripts/build_panoply_binary_linux.sh
+        run: bash ${{ matrix.build_script }}
+      - name: Smoke-test the binary
+        run: ./dist/panoply --help

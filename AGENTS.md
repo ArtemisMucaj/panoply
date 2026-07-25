@@ -119,7 +119,43 @@ Panoply-only keys, which are stripped before the entry reaches FastMCP:
   it interrupts the whole pytest session rather than failing one test. Assert
   that shutdown signals propagate at the single-call level instead.
 
-## CI
+## Commit style
 
-- Every push/PR: pytest + binary builds (macOS arm64, Linux x86_64).
-- No lint or typecheck step.
+[Conventional Commits](https://www.conventionalcommits.org/) — this is
+load-bearing, not cosmetic: `CHANGELOG.md` and every version bump are generated
+from commit subjects by release-please.
+
+```
+feat: add per-server request timeouts
+fix: keep disabled tools when a backend is unreachable
+refactor: move tool ownership into the domain
+chore: bump fastmcp to 3.3.0
+```
+
+Types: `feat` (minor bump), `fix` (patch), plus `refactor` / `perf` / `docs` /
+`test` / `chore` / `ci`. Imperative mood, subject under 72 characters, breaking
+changes marked `feat!:` or a `BREAKING CHANGE:` footer.
+
+**When squash-merging a PR, the PR title becomes the commit subject** — so the
+PR title has to be conventional too, or the change lands unreleased.
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | push / PR to `main` | pytest, then builds both binaries on the same runners the release uses and smoke-tests `--help` |
+| `release.yml` | push to `main` (+ manual dispatch) | release-please bumps the version and changelog, then builds and uploads release assets with SHA-256 checksums |
+
+Releases are automated — do not hand-edit `CHANGELOG.md` or the version in
+`pyproject.toml`:
+
+1. Merge conventional-commit PRs into `main`.
+2. release-please opens a Release PR with the changelog and version bump.
+3. Merging that PR tags the release and uploads `panoply-macos-aarch64`,
+   `panoply-linux-x86_64` and `checksums-sha256.txt`.
+
+The version lives **only** in `pyproject.toml` (`release-type: python`).
+Don't reintroduce a `__version__` literal in `src/panoply/__init__.py` — it is
+outside the paths the python strategy rewrites, so it would drift.
+
+There is no lint or typecheck step.

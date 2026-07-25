@@ -7,6 +7,7 @@ Layered domain-first:
 ``panoply.connector``    adapters — FastMCP, Starlette, Textual, the filesystem
 
 Dependencies point inwards only: connector → application → domain.
-"""
 
-__version__ = "0.1.0"
+The version lives only in ``pyproject.toml`` — release-please bumps it there,
+and a second copy here would silently drift.
+"""
