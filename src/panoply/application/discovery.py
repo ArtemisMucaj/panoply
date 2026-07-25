@@ -15,6 +15,13 @@ log = logging.getLogger("panoply.discovery")
 
 DEFAULT_PROBE_TIMEOUT = 30.0
 
+#: Exceptions that mean "this task or this process is going away". They are
+#: re-raised rather than downgraded to an empty tool list: swallowing
+#: ``CancelledError`` in particular would make a probe ignore its own
+#: cancellation, so a disconnected client or a shutdown would wait out the full
+#: timeout and the caller would still be handed a result.
+PROPAGATE = (SystemExit, KeyboardInterrupt, GeneratorExit, asyncio.CancelledError)
+
 
 class DiscoveryService:
     """Probes backends for their tool lists.
@@ -45,7 +52,7 @@ class DiscoveryService:
         """
         try:
             return await asyncio.wait_for(self.inspect(server), timeout=self.timeout)
-        except (SystemExit, KeyboardInterrupt, GeneratorExit):
+        except PROPAGATE:
             raise
         except asyncio.TimeoutError:
             log.warning("[%s] probe timed out after %.1fs", server.name, self.timeout)

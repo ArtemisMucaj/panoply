@@ -7,7 +7,7 @@ import logging
 
 import pytest
 
-from panoply.application.discovery import DiscoveryService
+from panoply.application.discovery import PROPAGATE, DiscoveryService
 from panoply.domain.model.server import ServerDefinition
 from panoply.domain.model.tool import ToolDescriptor
 
@@ -61,13 +61,26 @@ class TestCatalogue:
         probe = ScriptedProbe({"alpha": Weird("weird"), "beta": []})
         assert (await make_service(probe, configuration).catalogue())["alpha"] == []
 
-    @pytest.mark.parametrize("signal", [KeyboardInterrupt, SystemExit])
-    async def test_shutdown_signals_are_not_swallowed(self, configuration, signal) -> None:
-        """A probe must never turn an interrupt into "this server has no tools"."""
-        probe = ScriptedProbe({"alpha": signal()})
+    async def test_cancellation_is_not_swallowed(self, configuration) -> None:
+        """A cancelled probe must stay cancelled.
+
+        Downgrading it to "this server has no tools" would make the task ignore
+        its own cancellation: a client that disconnects mid-request, or a
+        shutdown, would wait out the full timeout and still get a result.
+        """
+        probe = ScriptedProbe({"alpha": asyncio.CancelledError()})
         service = make_service(probe, configuration)
-        with pytest.raises(signal):
+        with pytest.raises(asyncio.CancelledError):
             await service.inspect_safely(ServerDefinition("alpha", {"url": "http://a"}))
+
+    def test_shutdown_signals_are_declared_as_propagating(self) -> None:
+        """Asserted rather than exercised on purpose.
+
+        Raising `KeyboardInterrupt` or `SystemExit` inside an async test escapes
+        `pytest.raises` on Python 3.11 (a `wait_for` internals difference) and
+        aborts the whole session — it passed on 3.12 and broke CI. See AGENTS.md.
+        """
+        assert {SystemExit, KeyboardInterrupt, GeneratorExit} <= set(PROPAGATE)
 
     async def test_failure_is_logged_with_the_server_name(
         self, configuration, caplog: pytest.LogCaptureFixture

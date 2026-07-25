@@ -115,9 +115,15 @@ Panoply-only keys, which are stripped before the entry reaches FastMCP:
   a container and pass it in.
 - `tests/unit/application/conftest.py` holds in-memory doubles for every port,
   so the application layer is tested with no filesystem and no FastMCP.
-- Never raise `KeyboardInterrupt` from inside an `asyncio.gather` under test —
-  it interrupts the whole pytest session rather than failing one test. Assert
-  that shutdown signals propagate at the single-call level instead.
+- **Never raise `KeyboardInterrupt` or `SystemExit` inside an async test.** On
+  Python 3.11 it escapes `pytest.raises` (a `wait_for` internals difference) and
+  aborts the whole session — it passed on 3.12 and broke CI. Assert the policy
+  instead: `test_shutdown_signals_are_declared_as_propagating` checks the
+  `PROPAGATE` tuple, and cancellation is exercised with `asyncio.CancelledError`,
+  which is safe.
+- `.python-version` pins local dev to **3.11**, the floor CI tests, because that
+  KeyboardInterrupt bug was invisible on 3.12. CI runs the suite on 3.11 **and**
+  3.13 so version-specific breakage surfaces either way.
 
 ## The published API contract
 

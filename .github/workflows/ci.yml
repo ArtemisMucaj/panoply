@@ -8,15 +8,21 @@ on:
 
 jobs:
 
+  # Both ends of the supported range: a KeyboardInterrupt test once passed on
+  # 3.12 and aborted the whole session on 3.11, so one version is not enough.
   test:
-    name: Run tests
+    name: Run tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
       - name: Run pytest
         run: uv run --group dev pytest tests
       - name: Check openapi.yaml is current
