@@ -31,14 +31,11 @@ class Preset:
     def from_payload(cls, payload: Any) -> Preset:
         if not isinstance(payload, Mapping):
             raise InvalidConfiguration("preset entries must be JSON objects")
-        try:
-            identifier, name, file_path = (
-                payload["id"],
-                payload["name"],
-                payload["filePath"],
-            )
-        except KeyError as exc:
-            raise InvalidConfiguration(f"preset is missing {exc}") from exc
+        identifier = payload.get("id") or ""
+        name = payload.get("name") or ""
+        file_path = payload.get("filePath")
+        if file_path is None:
+            return cls(identifier, name, Path("servers.json"))
         extras = {
             k: v for k, v in payload.items() if k not in {"id", "name", "filePath"}
         }

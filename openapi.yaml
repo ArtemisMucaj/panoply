@@ -806,8 +806,7 @@ components:
           title: Args
         env:
           anyOf:
-          - additionalProperties:
-              type: string
+          - additionalProperties: true
             type: object
           - type: 'null'
           title: Env
@@ -817,7 +816,6 @@ components:
         auth:
           anyOf:
           - type: string
-            const: oauth
           - type: 'null'
           title: Auth
           description: Set to `oauth` to have Panoply run and cache the OAuth flow.

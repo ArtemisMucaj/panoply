@@ -10,5 +10,11 @@ except ImportError:
 
 from panoply.connector.cli.main import main  # noqa: E402
 
+
+def _entry() -> int:
+    """Console-script entry point — preserves truststore injection."""
+    return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_entry())

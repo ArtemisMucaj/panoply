@@ -57,7 +57,12 @@ def main(argv: Sequence[str] | None = None, settings: Settings | None = None) ->
     if arguments.http_port is not None:
         from panoply.connector.http.server import serve_http
 
-        serve_http(container, arguments.http_port, code_mode=arguments.code_mode)
+        serve_http(
+            container,
+            arguments.http_port,
+            source=arguments.config,
+            code_mode=arguments.code_mode,
+        )
         return 0
 
     proxy = container.proxy.build(

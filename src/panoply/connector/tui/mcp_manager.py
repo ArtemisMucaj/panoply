@@ -72,6 +72,7 @@ class MCPManagerApp(App[None]):
             self.catalog = self.container.catalogs.load(self.source)
         except (PanoplyError, ValueError) as exc:
             self._set_status(f"Config parse error: {exc}")
+            return
         self._populate_tree()
         self._probe_all()
 
@@ -224,7 +225,15 @@ class MCPManagerApp(App[None]):
         Tool state is only written for servers that were actually probed —
         otherwise a backend that was unreachable this session would look like
         a server with no tools and lose its disabled list.
+
+        Refuses to write when the status bar shows a parse error, so a
+        malformed config is never overwritten with an empty catalog.
         """
+        status_text = str(self.query_one("#status", Static).render())
+        if status_text.startswith("Config parse error:"):
+            self._set_status("Refusing to save — config parse error.")
+            return
+
         catalog = self.catalog
         for node in self.query_one(Tree).root.children:
             data = node.data

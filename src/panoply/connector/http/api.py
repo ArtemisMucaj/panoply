@@ -147,7 +147,7 @@ def create_api_app(container: Container, mcp_port: int) -> FastAPI:
     configuration = container.configuration
     presets = container.preset_service
     discovery = container.discovery
-    data_dir = container.settings.data_dir
+    data_dir = container.settings.data_dir.resolve()
 
     app = FastAPI(
         title="Panoply Management API",

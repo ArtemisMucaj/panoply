@@ -62,7 +62,7 @@ class ServerEntry(BaseModel):
         default=None, description="Executable for a stdio backend."
     )
     args: list[str] | None = None
-    env: dict[str, str] | None = Field(
+    env: dict[str, Any] | None = Field(
         default=None,
         description=(
             "Environment for a stdio backend. `${VAR}` placeholders are expanded from "
@@ -70,7 +70,7 @@ class ServerEntry(BaseModel):
             "left verbatim so it fails visibly."
         ),
     )
-    auth: Literal["oauth"] | None = Field(
+    auth: str | None = Field(
         default=None,
         description="Set to `oauth` to have Panoply run and cache the OAuth flow.",
     )

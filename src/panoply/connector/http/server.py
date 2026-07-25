@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from panoply.connector.container import Container
 from panoply.connector.http.api import start_api_thread
@@ -42,7 +44,13 @@ async def broadcast_tools_changed(asgi_app) -> None:
         await asyncio.gather(*sends, return_exceptions=True)
 
 
-def serve_http(container: Container, port: int, *, code_mode: bool = False) -> None:
+def serve_http(
+    container: Container,
+    port: int,
+    *,
+    source: Path | None = None,
+    code_mode: bool = False,
+) -> None:
     """Run the MCP endpoint on *port* and the management API on ``port + 1``."""
     import uvicorn
     from fastmcp.server import FastMCP
@@ -57,7 +65,7 @@ def serve_http(container: Container, port: int, *, code_mode: bool = False) -> N
     # them from clients that didn't ask for them on the /mcp URL. One set of
     # backend subprocesses, per-connection opt-in.
     options = ProxyOptions(name=INNER_PROXY_NAME, skills=True, code_mode=code_mode)
-    inner = container.proxy.build(options)
+    inner = container.proxy.build(options, source)
 
     log.info("Starting HTTP mode — MCP on :%d, API on :%d", port, port + 1)
     outer = FastMCP("panoply")
@@ -76,11 +84,16 @@ def serve_http(container: Container, port: int, *, code_mode: bool = False) -> N
                 app=mcp._mcp_server, json_response=False, stateless=False
             )
             app.session_manager = session_manager
-            async with mcp._lifespan_manager(), session_manager.run():
+            try:
+                async with mcp._lifespan_manager(), session_manager.run():
+                    if not ready.done():
+                        ready.set_result(None)
+                    # Stay alive until the task is cancelled on shutdown.
+                    await asyncio.get_event_loop().create_future()
+            except BaseException as exc:
                 if not ready.done():
-                    ready.set_result(None)
-                # Stay alive until the task is cancelled on shutdown.
-                await asyncio.get_event_loop().create_future()
+                    ready.set_exception(exc)
+                raise
 
         session_tasks.append(asyncio.create_task(run()))
         await asyncio.shield(ready)
@@ -114,10 +127,22 @@ def serve_http(container: Container, port: int, *, code_mode: bool = False) -> N
             changes.
             """
             try:
-                rebuilt = container.proxy.build(options)
+                rebuilt = container.proxy.build(options, source)
             except Exception as exc:
                 log.error("Config reload failed: %s", exc)
                 return
+            # Disconnect all live sessions so their StatefulProxyClient caches
+            # (and the stdio backend subprocesses they hold) are cleaned up
+            # before we point the provider at the rebuilt server.
+            session_manager = asgi_app.session_manager
+            if session_manager is not None:
+                for transport in list(session_manager._server_instances.values()):
+                    write_stream = getattr(transport, "_write_stream", None)
+                    if write_stream is not None:
+                        try:
+                            await write_stream.aclose()
+                        except Exception:
+                            pass
             provider.server = rebuilt.server
             log.info("Config reloaded")
             await broadcast_tools_changed(asgi_app)
@@ -126,10 +151,12 @@ def serve_http(container: Container, port: int, *, code_mode: bool = False) -> N
             """Show or hide one tool on the live proxy, leaving backends alone."""
             qualified = f"{server}_{tool}"
             current = provider.server
-            if enabled:
-                current.enable(names={qualified})
-            else:
-                current.disable(names={qualified})
+            # Directly modify tool visibility; enable/disable append a new
+            # Visibility transform on every call, so the list grows without
+            # bound.
+            tools = getattr(current, "_tools", {})
+            if qualified in tools:
+                tools[qualified]._enabled = enabled
             await broadcast_tools_changed(asgi_app)
 
         # The API runs on its own thread, so its callbacks have to hop back

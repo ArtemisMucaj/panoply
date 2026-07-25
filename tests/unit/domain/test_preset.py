@@ -29,9 +29,16 @@ class TestPreset:
         payload = {"id": "p1", "name": "w", "filePath": "/f.json", "colour": "red"}
         assert Preset.from_payload(payload).to_payload()["colour"] == "red"
 
-    def test_missing_field_is_invalid(self) -> None:
-        with pytest.raises(InvalidConfiguration):
-            Preset.from_payload({"id": "p1", "name": "w"})
+    def test_missing_filePath_falls_back_to_servers_json(
+        self,
+    ) -> None:
+        preset = Preset.from_payload({"id": "p1", "name": "w"})
+        assert preset.file_path == Path("servers.json")
+
+    def test_missing_id_and_name_are_empty_strings(self) -> None:
+        preset = Preset.from_payload({"filePath": "/f.json"})
+        assert preset.id == ""
+        assert preset.name == ""
 
     def test_non_object_is_invalid(self) -> None:
         with pytest.raises(InvalidConfiguration):

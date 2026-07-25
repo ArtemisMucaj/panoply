@@ -157,12 +157,10 @@ class TestLoading:
         app = MCPManagerApp(container, bad)
         async with app.run_test() as pilot:
             await pilot.pause(0.1)
-            # The parse-error status is immediately overwritten by the empty
-            # tree's own message, then by the probe worker's.
-            assert str(app.query_one("#status").render()) in (
-                "No servers configured.",
-                "No enabled servers.",
-            )
+            # The parse-error status is preserved — the app refuses to overwrite
+            # a malformed config with an empty catalog.
+            status = str(app.query_one("#status").render())
+            assert status.startswith("Config parse error:")
 
 
 class TestToggling:

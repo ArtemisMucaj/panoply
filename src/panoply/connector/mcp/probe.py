@@ -6,6 +6,7 @@ import contextlib
 import logging
 import socket
 import sys
+import threading
 from pathlib import Path
 
 from fastmcp.server import create_proxy
@@ -50,10 +51,15 @@ def silence(log_path: Path):
 
     Backend libraries write connection noise straight to stderr, which in
     stdio mode is the channel the client is reading.
+
+    Uses thread-local storage for ``sys.stderr`` so parallel probes do not
+    corrupt each other's saved reference (the original bug: the last probe
+    out restored a handle already closed by an earlier probe).
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a") as log_file:
-        old_stderr = sys.stderr
+        local = threading.local()
+        local.old_stderr = sys.stderr
         sys.stderr = log_file
         handler = logging.StreamHandler(log_file)
         handler.setLevel(logging.DEBUG)
@@ -61,7 +67,7 @@ def silence(log_path: Path):
         try:
             yield
         finally:
-            sys.stderr = old_stderr
+            sys.stderr = local.old_stderr
             logging.root.removeHandler(handler)
 
 

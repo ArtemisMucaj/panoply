@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-panoply = "panoply.connector.cli.main:run"
+panoply = "panoply.__main__:_entry"
 
 [dependency-groups]
 dev = [

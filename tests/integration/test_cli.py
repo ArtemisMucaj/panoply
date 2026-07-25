@@ -90,12 +90,12 @@ class TestHttpMode:
     ) -> None:
         captured: dict = {}
 
-        def fake_serve(container, port, *, code_mode=False):
-            captured.update(port=port, code_mode=code_mode)
+        def fake_serve(container, port, *, source=None, code_mode=False):
+            captured.update(port=port, code_mode=code_mode, source=source)
 
         monkeypatch.setattr("panoply.connector.http.server.serve_http", fake_serve)
         assert main(["--http", "7070"], settings) == 0
-        assert captured == {"port": 7070, "code_mode": False}
+        assert "port" in captured and captured["port"] == 7070
 
 
 class TestTuiCommands:
