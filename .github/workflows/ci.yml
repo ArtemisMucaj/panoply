@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  # Both ends of the supported range: a KeyboardInterrupt test once passed on
+  # 3.12 and aborted the whole session on 3.11, so one version is not enough.
+  test:
+    name: Run tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run pytest
+        run: uv run --group dev pytest tests
+      - name: Check openapi.yaml is current
+        run: uv run --group dev python scripts/dump_openapi.py --check
+
+  # Builds the same binaries the release workflow does, on the same runners, so
+  # a PyInstaller break is caught on the PR instead of blocking a release.
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            build_script: scripts/build_panoply_binary_linux.sh
+          - os: macos-14
+            build_script: scripts/build_panoply_binary.sh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build panoply binary
+        run: bash ${{ matrix.build_script }}
+      - name: Smoke-test the binary
+        run: ./dist/panoply --help

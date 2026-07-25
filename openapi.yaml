@@ -1,0 +1,949 @@
+# Generated from the FastAPI app — do not edit by hand.
+#
+#   uv run python scripts/dump_openapi.py
+#
+# The source of truth is panoply/connector/http/{api,models}.py. A running
+# server also serves this live at /openapi.json, with docs at /docs.
+openapi: 3.1.0
+info:
+  title: Panoply Management API
+  description: |
+    The REST API for driving a running Panoply MCP proxy — read and edit the server
+    catalog, probe backends for their real tool lists, and switch between presets.
+
+    ## Where it runs
+
+    Panoply started with `--http PORT` serves two things:
+
+    | Port | What |
+    |---|---|
+    | `PORT` | the MCP endpoint, at `/mcp` (Streamable HTTP; not described here) |
+    | `PORT + 1` | **this API**, under `/api` |
+
+    Both bind `127.0.0.1` only. There is **no authentication and no CORS** — the
+    API is a local control plane, so anything reaching it is already on the
+    machine. Do not expose it to a network.
+
+    ## Live changes
+
+    Edits take effect immediately on the running proxy; clients keep their MCP
+    sessions and are told to re-read the tool list. Two grades of change:
+
+    - **Tool toggles** flip a tool's visibility in place. Backend subprocesses keep
+      running.
+    - **Everything else** (server toggle, config write, preset activation) changes
+      *which* backends are proxied, so the proxy is rebuilt and stdio backends
+      restart.
+
+    ## Error model
+
+    | Status | Body | Meaning |
+    |---|---|---|
+    | `422` | `{"detail": [...]}` | request validation — a missing or ill-typed field. FastAPI's standard shape. |
+    | `400` | `{"error": "..."}` | rejected by Panoply — currently only a `path`/`config` outside the data directory. |
+    | `404` | `{"error": "..."}` | no such server, preset, or route. |
+    | `405` | `{"error": "..."}` | wrong method for that route. |
+    | `500` | `{"error": "..."}` | Panoply failed — unreadable config on disk, failed write. |
+
+    A `4xx` is worth surfacing to a user; a `500` means retrying the same request
+    will not help.
+  version: 0.1.0
+servers:
+- url: http://127.0.0.1:7071
+  description: Default (MCP on 7070)
+paths:
+  /api/health:
+    get:
+      tags:
+      - Status
+      summary: Liveness and port layout
+      description: |-
+        Cheap and dependency-free — it does not read the config or touch a
+        backend. Poll this to decide whether Panoply is up.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/tools:
+    get:
+      tags:
+      - Discovery
+      summary: Probe every enabled backend for its tool list
+      description: |-
+        Opens a real connection to each **enabled** server in parallel and
+        returns the tools it reports, with the `servername_` prefix stripped.
+
+        This is deliberately not the proxy's own tool list: through the proxy an
+        agent only ever sees the three synthetic tools, whereas a management UI
+        needs the real per-server catalogue to render enable/disable controls.
+
+        A backend that is unreachable, slow (30s cap), or failing yields an
+        **empty array** rather than failing the whole request — so an empty list
+        means "could not be probed" as well as "has no tools". Expect this call
+        to take as long as your slowest backend.
+
+        Disabled servers are omitted entirely.
+      operationId: probeTools
+      parameters:
+      - name: config
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Operate on a specific configuration file instead of the active one.
+            Must resolve to a `.json` file directly inside Panoply's data directory; anything
+            else is a 400.
+          examples:
+          - /Users/me/.panoply/work.json
+          title: Config
+        description: Operate on a specific configuration file instead of the active one. Must
+          resolve to a `.json` file directly inside Panoply's data directory; anything else
+          is a 400.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Tool'
+                title: Response Probetools
+        '400':
+          description: The `path`/`config` override was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/config:
+    get:
+      tags:
+      - Configuration
+      summary: Read the configuration document
+      description: |-
+        Returns the active configuration verbatim, exactly as stored —
+        including any keys Panoply itself does not interpret.
+      operationId: getConfig
+      parameters:
+      - name: path
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Operate on a specific configuration file instead of the active one.
+            Must resolve to a `.json` file directly inside Panoply's data directory; anything
+            else is a 400.
+          examples:
+          - /Users/me/.panoply/work.json
+          title: Path
+        description: Operate on a specific configuration file instead of the active one. Must
+          resolve to a `.json` file directly inside Panoply's data directory; anything else
+          is a 400.
+      responses:
+        '200':
+          description: The configuration document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Configuration'
+        '400':
+          description: The `path`/`config` override was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - Configuration
+      summary: Replace the configuration document
+      description: |-
+        Overwrites the whole document with the request body, written
+        atomically (temp file plus rename), then rebuilds the proxy.
+
+        The body is stored **verbatim**: it is validated against the schema, but
+        what lands on disk is the exact JSON you sent — Panoply does not
+        normalise, reorder, or drop unknown keys, so an editor that manages the
+        file itself keeps full control.
+
+        This replaces rather than merges. Read the document first if you intend
+        to change one field.
+      operationId: replaceConfig
+      parameters:
+      - name: path
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Operate on a specific configuration file instead of the active one.
+            Must resolve to a `.json` file directly inside Panoply's data directory; anything
+            else is a 400.
+          examples:
+          - /Users/me/.panoply/work.json
+          title: Path
+        description: Operate on a specific configuration file instead of the active one. Must
+          resolve to a `.json` file directly inside Panoply's data directory; anything else
+          is a 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Configuration'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOk'
+        '400':
+          description: The `path`/`config` override was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/servers/{name}/toggle:
+    post:
+      tags:
+      - Configuration
+      summary: Enable or disable a whole server
+      description: |-
+        Disabling writes `"enabled": false` onto the entry; enabling removes
+        the key entirely, since enabled is the default and a minimal config is
+        easier to hand-edit.
+
+        Rebuilds the proxy: a disabled server's backend process is stopped and
+        its tools disappear.
+      operationId: toggleServer
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Server name, as it appears under `mcpServers`.
+          examples:
+          - github
+          title: Name
+        description: Server name, as it appears under `mcpServers`.
+      - name: path
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Operate on a specific configuration file instead of the active one.
+            Must resolve to a `.json` file directly inside Panoply's data directory; anything
+            else is a 400.
+          examples:
+          - /Users/me/.panoply/work.json
+          title: Path
+        description: Operate on a specific configuration file instead of the active one. Must
+          resolve to a `.json` file directly inside Panoply's data directory; anything else
+          is a 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServerToggle'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOk'
+        '400':
+          description: The `path`/`config` override was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such server or preset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tools/toggle:
+    post:
+      tags:
+      - Configuration
+      summary: Show or hide a single tool
+      description: |-
+        Adds or removes the tool from its server's `disabledTools`. Idempotent
+        in both directions: disabling twice appends once, and enabling a tool
+        that was never disabled changes nothing.
+
+        Unlike every other write, this **does not rebuild the proxy** — the tool
+        is flipped on the live server and backend processes are untouched. Use it
+        in preference to editing `disabledTools` through `PUT /api/config`, which
+        would restart every backend.
+
+        The tool name is the bare name as returned by `GET /api/tools`, without
+        the server prefix.
+      operationId: toggleTool
+      parameters:
+      - name: path
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Operate on a specific configuration file instead of the active one.
+            Must resolve to a `.json` file directly inside Panoply's data directory; anything
+            else is a 400.
+          examples:
+          - /Users/me/.panoply/work.json
+          title: Path
+        description: Operate on a specific configuration file instead of the active one. Must
+          resolve to a `.json` file directly inside Panoply's data directory; anything else
+          is a 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolToggle'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOk'
+        '400':
+          description: The `path`/`config` override was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such server or preset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/presets:
+    get:
+      tags:
+      - Presets
+      summary: List presets and the active configuration
+      description: |-
+        `activeConfigPath` is the file currently in force. It follows the
+        active preset, and falls back to the default `servers.json` when no
+        preset is active — or when the active one points at a file that has since
+        been deleted.
+      operationId: listPresets
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresetBook'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+      - Presets
+      summary: Create a preset
+      description: |-
+        Registers a name and a file path; the id is generated. Creating a
+        preset does not activate it, and the file is not required to exist yet.
+      operationId: createPreset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresetInput'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresetEnvelope'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/presets/{id}:
+    patch:
+      tags:
+      - Presets
+      summary: Rename a preset or repoint it
+      description: |-
+        Only the fields present in the body are changed.
+
+        Repointing the **active** preset rebuilds the proxy; renaming never does.
+      operationId: updatePreset
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Preset id, as returned when it was created.
+          title: Id
+        description: Preset id, as returned when it was created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresetPatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresetEnvelope'
+        '404':
+          description: No such server or preset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Presets
+      summary: Delete a preset
+      description: |-
+        The configuration file itself is left on disk — only the pointer is
+        removed. Deleting the active preset reverts to the default configuration
+        and rebuilds the proxy.
+      operationId: deletePreset
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Preset id, as returned when it was created.
+          title: Id
+        description: Preset id, as returned when it was created.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOk'
+        '404':
+          description: No such server or preset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/presets/{id}/activate:
+    post:
+      tags:
+      - Presets
+      summary: Switch the active preset
+      description: |-
+        Makes this preset's file the active configuration and rebuilds the
+        proxy. No request body.
+
+        Pass the literal id **`default`** to deactivate whatever is active and
+        fall back to `servers.json`; `activePresetID` then comes back `null`.
+      operationId: activatePreset
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: A preset id, or the literal `default` to revert.
+          examples:
+          - default
+          title: Id
+        description: A preset id, or the literal `default` to revert.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationResult'
+        '404':
+          description: No such server or preset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Panoply failed; retrying will not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    ActivationResult:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+        activePresetID:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Activepresetid
+          description: '`null` after reverting to the default.'
+      type: object
+      required:
+      - activePresetID
+      title: ActivationResult
+    Configuration:
+      properties:
+        mcpServers:
+          additionalProperties:
+            $ref: '#/components/schemas/ServerEntry'
+          type: object
+          title: Mcpservers
+          description: Backends, keyed by name.
+      additionalProperties: true
+      type: object
+      title: Configuration
+      description: |-
+        A configuration document — the standard MCP config schema plus two extras.
+
+        The Panoply-only keys (`enabled`, `disabledTools`) are stripped before an
+        entry reaches the MCP client, so they never touch a backend. Unrecognised
+        top-level keys are preserved across edits.
+      example:
+        mcpServers:
+          filesystem:
+            args:
+            - -y
+            - '@modelcontextprotocol/server-filesystem'
+            - /home/me
+            command: npx
+            enabled: false
+          github:
+            auth: oauth
+            description: Issues, PRs, commits, code search
+            disabledTools:
+            - delete_repository
+            url: https://api.githubcopilot.com/mcp/
+    Error:
+      properties:
+        error:
+          type: string
+          title: Error
+          description: Human-readable; the status code carries the meaning.
+          examples:
+          - Server 'ghost' not found
+      type: object
+      required:
+      - error
+      title: Error
+      description: Panoply's own errors. Request-validation failures use FastAPI's 422 instead.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Health:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+        mcp_port:
+          type: integer
+          title: Mcp Port
+          description: Port serving `/mcp`.
+          examples:
+          - 7070
+        api_port:
+          type: integer
+          title: Api Port
+          description: Port serving this API — always `mcp_port + 1`.
+          examples:
+          - 7071
+      type: object
+      required:
+      - mcp_port
+      - api_port
+      title: Health
+      description: Liveness and the port layout.
+    Preset:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: Server-generated (a UUID).
+        name:
+          type: string
+          title: Name
+          examples:
+          - work
+        filePath:
+          type: string
+          title: Filepath
+          description: Absolute path to the configuration file.
+          examples:
+          - /Users/me/.panoply/work.json
+      additionalProperties: true
+      type: object
+      required:
+      - id
+      - name
+      - filePath
+      title: Preset
+      description: A named pointer to a configuration file.
+    PresetBook:
+      properties:
+        presets:
+          items:
+            $ref: '#/components/schemas/Preset'
+          type: array
+          title: Presets
+        activePresetID:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Activepresetid
+          description: '`null` when the default configuration is in force.'
+        activeConfigPath:
+          type: string
+          title: Activeconfigpath
+          description: Absolute path to the configuration currently in force.
+      type: object
+      required:
+      - presets
+      - activePresetID
+      - activeConfigPath
+      title: PresetBook
+    PresetEnvelope:
+      properties:
+        preset:
+          $ref: '#/components/schemas/Preset'
+      type: object
+      required:
+      - preset
+      title: PresetEnvelope
+    PresetInput:
+      properties:
+        name:
+          type: string
+          title: Name
+          examples:
+          - work
+        filePath:
+          type: string
+          title: Filepath
+          examples:
+          - /Users/me/.panoply/work.json
+      type: object
+      required:
+      - name
+      - filePath
+      title: PresetInput
+    PresetPatch:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        filePath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filepath
+      type: object
+      title: PresetPatch
+      description: Only the fields present are changed.
+    ServerEntry:
+      properties:
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+          description: Endpoint of an HTTP/SSE backend.
+        command:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Command
+          description: Executable for a stdio backend.
+        args:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Args
+        env:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Env
+          description: Environment for a stdio backend. `${VAR}` placeholders are expanded
+            from Panoply's own environment when the backend starts; an unset variable is left
+            verbatim so it fails visibly.
+        auth:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Auth
+          description: Set to `oauth` to have Panoply run and cache the OAuth flow.
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: One-line summary of what this backend is for. A native MCP field —
+            Panoply surfaces it through the `load_tools` tool so an agent can pick an area
+            before searching.
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+          description: '**Panoply-only.** Absent means enabled; `false` switches the server
+            off. Never written as `true`.'
+        disabledTools:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Disabledtools
+          description: '**Panoply-only.** Bare tool names to hide, without the server prefix.'
+      additionalProperties: true
+      type: object
+      title: ServerEntry
+      description: |-
+        One backend under ``mcpServers``.
+
+        Either `url` (HTTP/SSE) or `command` (stdio), plus anything else the MCP
+        config schema allows — only the fields Panoply itself acts on are listed.
+    ServerToggle:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+          description: Defaults to `true` if omitted.
+          default: true
+      type: object
+      title: ServerToggle
+    StatusOk:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+      type: object
+      title: StatusOk
+      description: Returned by writes that have nothing else to say.
+    Tool:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: Bare tool name, server prefix stripped.
+          examples:
+          - create_issue
+        description:
+          type: string
+          title: Description
+          description: As reported by the backend; empty string if it gave none.
+          examples:
+          - Create a new issue in a repository.
+      type: object
+      required:
+      - name
+      - description
+      title: Tool
+      description: A tool as reported by a backend.
+    ToolToggle:
+      properties:
+        server:
+          type: string
+          title: Server
+          examples:
+          - github
+        tool:
+          type: string
+          title: Tool
+          description: Bare name, without the server prefix.
+          examples:
+          - delete_repository
+        enabled:
+          type: boolean
+          title: Enabled
+          description: Defaults to `true` if omitted.
+          default: true
+      type: object
+      required:
+      - server
+      - tool
+      title: ToolToggle
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+tags:
+- name: Status
+  description: Liveness and port discovery.
+- name: Configuration
+  description: Reading and editing the server catalog.
+- name: Discovery
+  description: Asking the backends what tools they actually have.
+- name: Presets
+  description: Named configurations and which one is active.
