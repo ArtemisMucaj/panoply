@@ -873,6 +873,7 @@ dev = [
     { name = "coverage", extra = ["toml"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -890,6 +891,7 @@ dev = [
     { name = "coverage", extras = ["toml"], specifier = ">=7.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

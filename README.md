@@ -84,6 +84,27 @@ panoply --config PATH      # use a specific config file
 Preset activation and server/tool toggles hot-swap the active config live —
 connected clients keep their sessions.
 
+## Management API
+
+Running with `--http PORT` also serves a REST API on `PORT + 1` for reading and
+editing the catalog, probing backends, and switching presets. Edits apply to the
+running proxy immediately — connected clients keep their sessions.
+
+It is documented in **[openapi.yaml](openapi.yaml)**, which is what to generate a
+client from. In short:
+
+| | |
+|---|---|
+| `GET /api/health` | liveness and the port layout |
+| `GET /api/tools` | probe every enabled backend for its real tool list |
+| `GET` / `PUT /api/config` | read or replace the configuration document |
+| `POST /api/servers/{name}/toggle` | enable or disable a whole server |
+| `POST /api/tools/toggle` | show or hide one tool, without restarting backends |
+| `GET` / `POST /api/presets` … | manage presets and activate one |
+
+It binds `127.0.0.1` and has **no authentication** — it is a local control
+plane. Don't expose it to a network.
+
 ## Architecture
 
 Three layers with dependencies pointing inwards — `connector → application →

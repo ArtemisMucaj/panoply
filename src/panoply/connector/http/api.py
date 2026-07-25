@@ -24,30 +24,55 @@ from panoply.domain.errors import NotFound
 Handler = Callable[[Request], Any]
 
 
-def endpoint(*, client_error: bool = False) -> Callable[[Handler], Handler]:
-    """Map domain errors onto status codes.
+async def json_error(request: Request, exc: HTTPException) -> JSONResponse:
+    """Render Starlette's own errors (404, 405, …) in the same shape as ours.
 
-    Unknown aggregates are 404s; malformed input is the caller's fault
-    (*client_error*), and anything else is ours.
+    Every response this API can produce is then JSON with the same error key,
+    so an integrator never has to sniff the content type.
+    """
+    return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+
+def endpoint(handler: Handler) -> Handler:
+    """Map errors onto status codes.
+
+    Unknown aggregates are 404, anything the caller could have sent correctly
+    is a 400 raised as an ``HTTPException``, and whatever is left is ours: 500.
     """
 
-    def decorate(handler: Handler) -> Handler:
-        @wraps(handler)
-        async def wrapper(request: Request) -> JSONResponse:
-            try:
-                return await handler(request)
-            except HTTPException:
-                raise
-            except NotFound as exc:
-                return JSONResponse({"error": str(exc)}, status_code=404)
-            except Exception as exc:
-                return JSONResponse(
-                    {"error": str(exc)}, status_code=400 if client_error else 500
-                )
+    @wraps(handler)
+    async def wrapper(request: Request) -> JSONResponse:
+        try:
+            return await handler(request)
+        except HTTPException:
+            raise  # already carries its status; rendered by json_error
+        except NotFound as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
 
-        return wrapper
+    return wrapper
 
-    return decorate
+
+async def json_object_body(request: Request) -> dict[str, Any]:
+    """Parse the request body, or fail with a 400 the caller can act on."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400, detail="request body must be valid JSON"
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    return body
+
+
+def required(body: dict[str, Any], field: str) -> Any:
+    if field not in body:
+        raise HTTPException(
+            status_code=400, detail=f"missing required field '{field}'"
+        )
+    return body[field]
 
 
 def create_api_app(container: Container, mcp_port: int) -> Starlette:
@@ -87,7 +112,10 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
                 return resolved
         except Exception:
             pass
-        raise HTTPException(status_code=400, detail="invalid config")
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{param}' must be a .json file directly inside {data_dir}",
+        )
 
     # ── Status & discovery ────────────────────────────────────────────────────
 
@@ -96,7 +124,7 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
             {"status": "ok", "mcp_port": mcp_port, "api_port": mcp_port + 1}
         )
 
-    @endpoint()
+    @endpoint
     async def get_tools(request: Request) -> JSONResponse:
         source = resolve_source(request)
         catalogue = await discovery.catalogue(source)
@@ -109,35 +137,38 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
 
     # ── Configuration ─────────────────────────────────────────────────────────
 
-    @endpoint()
+    @endpoint
     async def config_endpoint(request: Request) -> JSONResponse:
         source = resolve_source(request, param="path")
         if request.method == "GET":
             return JSONResponse(configuration.read_document(source))
-        await configuration.replace_document(await request.json(), source)
+        await configuration.replace_document(await json_object_body(request), source)
         return JSONResponse({"status": "ok"})
 
-    @endpoint()
+    @endpoint
     async def toggle_server(request: Request) -> JSONResponse:
         source = resolve_source(request, param="path")
-        enabled = (await request.json()).get("enabled", True)
+        enabled = (await json_object_body(request)).get("enabled", True)
         await configuration.set_server_enabled(
             request.path_params["name"], enabled, source
         )
         return JSONResponse({"status": "ok"})
 
-    @endpoint()
+    @endpoint
     async def toggle_tool(request: Request) -> JSONResponse:
         source = resolve_source(request, param="path")
-        body = await request.json()
+        body = await json_object_body(request)
         await configuration.set_tool_enabled(
-            body["server"], body["tool"], body.get("enabled", True), source
+            required(body, "server"),
+            required(body, "tool"),
+            body.get("enabled", True),
+            source,
         )
         return JSONResponse({"status": "ok"})
 
     # ── Presets ───────────────────────────────────────────────────────────────
 
-    @endpoint()
+    @endpoint
     async def list_presets(request: Request) -> JSONResponse:
         book = presets.book()
         return JSONResponse(
@@ -147,15 +178,15 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
             }
         )
 
-    @endpoint(client_error=True)
+    @endpoint
     async def create_preset(request: Request) -> JSONResponse:
-        body = await request.json()
-        preset = presets.create(body["name"], body["filePath"])
+        body = await json_object_body(request)
+        preset = presets.create(required(body, "name"), required(body, "filePath"))
         return JSONResponse({"preset": preset.to_payload()}, status_code=201)
 
-    @endpoint(client_error=True)
+    @endpoint
     async def update_preset(request: Request) -> JSONResponse:
-        body = await request.json()
+        body = await json_object_body(request)
         preset = presets.update(
             request.path_params["id"],
             name=body.get("name"),
@@ -163,12 +194,12 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
         )
         return JSONResponse({"preset": preset.to_payload()})
 
-    @endpoint()
+    @endpoint
     async def delete_preset(request: Request) -> JSONResponse:
         presets.delete(request.path_params["id"])
         return JSONResponse({"status": "ok"})
 
-    @endpoint()
+    @endpoint
     async def activate_preset(request: Request) -> JSONResponse:
         preset_id = request.path_params.get("id")
         active = presets.activate(None if preset_id == "default" else preset_id)
@@ -186,7 +217,8 @@ def create_api_app(container: Container, mcp_port: int) -> Starlette:
             Route("/api/presets/{id}", update_preset, methods=["PATCH"]),
             Route("/api/presets/{id}", delete_preset, methods=["DELETE"]),
             Route("/api/presets/{id}/activate", activate_preset, methods=["POST"]),
-        ]
+        ],
+        exception_handlers={HTTPException: json_error},
     )
 
 

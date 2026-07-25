@@ -92,7 +92,9 @@ class TestConfig:
     ) -> None:
         outside = tmp_path / "evil.json"
         outside.write_text("{}")
-        assert client.get(f"/api/config?path={outside}").status_code == 400
+        response = client.get(f"/api/config?path={outside}")
+        assert response.status_code == 400
+        assert "must be a .json file" in response.json()["error"]
 
     def test_a_path_inside_the_data_dir_is_accepted(self, client, data_dir: Path) -> None:
         alternative = data_dir / "alt.json"
@@ -130,8 +132,11 @@ class TestServerToggle:
         assert response.status_code == 404
         assert "not found" in response.json()["error"]
 
-    def test_a_missing_body_is_a_500(self, client: TestClient) -> None:
-        assert client.post("/api/servers/alpha/toggle").status_code == 500
+    def test_a_missing_body_is_a_400(self, client: TestClient) -> None:
+        """The caller can fix this by sending a body, so it isn't a 500."""
+        response = client.post("/api/servers/alpha/toggle")
+        assert response.status_code == 400
+        assert response.json()["error"] == "request body must be valid JSON"
 
     def test_a_corrupt_config_is_a_500(self, client, servers_json: Path) -> None:
         servers_json.write_text("{ not json")
@@ -182,8 +187,10 @@ class TestToolToggle:
         )
         assert response.status_code == 404
 
-    def test_a_body_missing_keys_is_a_500(self, client: TestClient) -> None:
-        assert client.post("/api/tools/toggle", json={}).status_code == 500
+    def test_a_body_missing_keys_names_the_field(self, client: TestClient) -> None:
+        response = client.post("/api/tools/toggle", json={})
+        assert response.status_code == 400
+        assert response.json()["error"] == "missing required field 'server'"
 
 
 class TestPresets:
@@ -205,8 +212,10 @@ class TestPresets:
         listing = client.get("/api/presets").json()
         assert any(p["id"] == preset["id"] for p in listing["presets"])
 
-    def test_creating_without_a_path_is_a_400(self, client: TestClient) -> None:
-        assert client.post("/api/presets", json={"name": "only"}).status_code == 400
+    def test_creating_without_a_path_names_the_field(self, client: TestClient) -> None:
+        response = client.post("/api/presets", json={"name": "only"})
+        assert response.status_code == 400
+        assert response.json()["error"] == "missing required field 'filePath'"
 
     def test_updating_renames(self, client, data_dir: Path) -> None:
         created = self._create(client, data_dir, "a")
@@ -344,6 +353,31 @@ class TestHotSwapNotifications:
         container.events.on_configuration_changed(explode)
         response = client.post("/api/servers/alpha/toggle", json={"enabled": False})
         assert response.status_code == 200
+
+
+class TestErrorModel:
+    """Every response is JSON with the same error key — including Starlette's own."""
+
+    def test_an_unknown_route_is_json(self, client: TestClient) -> None:
+        response = client.get("/api/nope")
+        assert response.status_code == 404
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json() == {"error": "Not Found"}
+
+    def test_a_wrong_method_is_json(self, client: TestClient) -> None:
+        response = client.delete("/api/config")
+        assert response.status_code == 405
+        assert response.json() == {"error": "Method Not Allowed"}
+
+    def test_a_non_object_body_is_rejected(self, client: TestClient) -> None:
+        response = client.put("/api/config", json=[1, 2, 3])
+        assert response.status_code == 400
+        assert response.json()["error"] == "request body must be a JSON object"
+
+    def test_server_side_failures_stay_500(self, client, servers_json: Path) -> None:
+        """A corrupt file on disk is ours to fix, not the caller's."""
+        servers_json.write_text("{ not json")
+        assert client.get("/api/config").status_code == 500
 
 
 class TestRoundTrip:

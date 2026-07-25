@@ -119,6 +119,20 @@ Panoply-only keys, which are stripped before the entry reaches FastMCP:
   it interrupts the whole pytest session rather than failing one test. Assert
   that shutdown signals propagate at the single-call level instead.
 
+## The published API contract
+
+`openapi.yaml` at the repo root documents the management API and is what other
+projects integrate against. **Changing a route means changing that file in the
+same commit** — `tests/integration/test_openapi.py` fails both ways round: an
+undocumented route, and a documented route that doesn't exist.
+
+The error model is uniform and worth keeping that way: every response is JSON,
+every error is `{"error": "..."}`. `400` means the caller can fix it (raise
+`HTTPException` via `json_object_body` / `required`), `404` means a missing
+aggregate (raise a domain `NotFound`), and `500` is reserved for Panoply's own
+failures. Starlette's built-in 404/405 are rendered through the same shape by
+the `json_error` handler, so an integrator never has to sniff a content type.
+
 ## Commit style
 
 [Conventional Commits](https://www.conventionalcommits.org/) — this is
