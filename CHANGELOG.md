@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/ArtemisMucaj/panoply/compare/v0.1.1...v0.1.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* don't crash the release template when there is no PR ([#9](https://github.com/ArtemisMucaj/panoply/issues/9)) ([e52616f](https://github.com/ArtemisMucaj/panoply/commit/e52616fea5add3fe0b266fbbf06bcfc822a281f6))
+* keep openapi.yaml in sync with the release version ([#6](https://github.com/ArtemisMucaj/panoply/issues/6)) ([1d33722](https://github.com/ArtemisMucaj/panoply/commit/1d33722027f762d1d855742928547f926f605628))
+
 ## [0.1.1](https://github.com/ArtemisMucaj/panoply/compare/v0.1.0...v0.1.1) (2026-08-04)
 
 

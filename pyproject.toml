@@ -1,6 +1,6 @@
 [project]
 name = "panoply"
-version = "0.1.1"
+version = "0.1.2"
 description = "MCP proxy that aggregates multiple MCP servers behind 3 synthetic tools"
 requires-python = ">=3.11"
 dependencies = [
