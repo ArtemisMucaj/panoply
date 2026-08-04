@@ -29,12 +29,12 @@ jobs:
       # openapi.yaml is generated and embeds the package version, so a version
       # bump makes the committed spec stale (a test asserts they match). When
       # release-please has an open Release PR, regenerate the spec on that
-      # branch so the bump and the spec land together in the same PR.
-      - name: Check out the release PR branch
+      # branch so the bump and the spec land together in the same PR. The PR
+      # JSON is passed as a raw string and parsed in bash — putting fromJSON in
+      # an `env`/`with` expression crashes the template when there is no PR.
+      - name: Check out for spec sync
         if: ${{ steps.release.outputs.pr }}
         uses: actions/checkout@v4
-        with:
-          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
 
       - name: Install uv
         if: ${{ steps.release.outputs.pr }}
@@ -43,8 +43,11 @@ jobs:
       - name: Sync openapi.yaml to the release version
         if: ${{ steps.release.outputs.pr }}
         env:
-          PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
+          PR_BRANCH="$(echo "$RELEASE_PR" | python3 -c 'import json,sys; print(json.load(sys.stdin)["headBranchName"])')"
+          git fetch origin "$PR_BRANCH"
+          git checkout "$PR_BRANCH"
           uv run python scripts/dump_openapi.py
           if ! git diff --quiet openapi.yaml; then
             git config user.name "github-actions[bot]"
