@@ -21,6 +21,9 @@ bash scripts/build_panoply_binary.sh        # macOS arm64  → dist/panoply
 bash scripts/build_panoply_binary_linux.sh  # Linux x86_64 → dist/panoply
 ```
 
+The prebuilt macOS release binary is signed with a Developer ID and notarized
+by Apple, so it runs without a Gatekeeper exception.
+
 ## Connecting your agent
 
 ```json
