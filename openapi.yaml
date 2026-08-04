@@ -47,7 +47,7 @@ info:
 
     A `4xx` is worth surfacing to a user; a `500` means retrying the same request
     will not help.
-  version: 0.1.0
+  version: 0.1.1
 servers:
 - url: http://127.0.0.1:7071
   description: Default (MCP on 7070)
