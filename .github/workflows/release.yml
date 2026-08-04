@@ -26,6 +26,33 @@ jobs:
         with:
           release-type: python
 
+      # openapi.yaml is generated and embeds the package version, so a version
+      # bump makes the committed spec stale (a test asserts they match). When
+      # release-please has an open Release PR, regenerate the spec on that
+      # branch so the bump and the spec land together in the same PR.
+      - name: Check out the release PR branch
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+
+      - name: Install uv
+        if: ${{ steps.release.outputs.pr }}
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync openapi.yaml to the release version
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+        run: |
+          uv run python scripts/dump_openapi.py
+          if ! git diff --quiet openapi.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sync openapi.yaml to the release version" openapi.yaml
+            git push origin "HEAD:$PR_BRANCH"
+          fi
+
   build:
     name: Build ${{ matrix.os }}
     needs: release-please
