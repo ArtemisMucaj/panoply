@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/ArtemisMucaj/panoply/compare/v0.1.2...v0.1.3) (2026-08-05)
+
+
+### Bug Fixes
+
+* re-release to publish the notarized macOS binary ([#11](https://github.com/ArtemisMucaj/panoply/issues/11)) ([a3283f9](https://github.com/ArtemisMucaj/panoply/commit/a3283f96169a4e90b46d45f8cfd914ff27434ddf))
+
 ## [0.1.2](https://github.com/ArtemisMucaj/panoply/compare/v0.1.1...v0.1.2) (2026-08-04)
 
 
