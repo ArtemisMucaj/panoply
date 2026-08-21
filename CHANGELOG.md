@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/ArtemisMucaj/panoply/compare/v0.1.3...v0.2.0) (2026-08-21)
+
+
+### Features
+
+* upgrade to fastmcp 4 and mcp 2.0 ([98c4226](https://github.com/ArtemisMucaj/panoply/commit/98c4226e802d875d58359b3d0a35dc2cf225d1f1)), closes [#13](https://github.com/ArtemisMucaj/panoply/issues/13)
+
 ## [0.1.3](https://github.com/ArtemisMucaj/panoply/compare/v0.1.2...v0.1.3) (2026-08-05)
 
 
