@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 from fastmcp.server import create_proxy
-from mcp import McpError
+from mcp import MCPError
 
 from panoply.connector.mcp.translator import MCPConfigTranslator
 from panoply.connector.settings import Settings
@@ -26,7 +26,7 @@ def free_port() -> int:
 
 
 class SuppressMcpSessionWarning(logging.Filter):
-    """Demote 'Failed to connect' warnings caused by McpError to DEBUG.
+    """Demote 'Failed to connect' warnings caused by MCPError to DEBUG.
 
     A backend that is simply down is an expected outcome of probing, not
     something worth a warning on every listing.
@@ -34,7 +34,7 @@ class SuppressMcpSessionWarning(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno == logging.WARNING and record.exc_info:
-            if isinstance(record.exc_info[1], McpError):
+            if isinstance(record.exc_info[1], MCPError):
                 record.levelno = logging.DEBUG
                 record.levelname = "DEBUG"
         return True

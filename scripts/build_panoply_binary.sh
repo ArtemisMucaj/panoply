@@ -26,7 +26,7 @@ uv run --with 'pyinstaller==6.19.0' pyinstaller \
   --copy-metadata fastmcp \
   --copy-metadata mcp \
   --copy-metadata anyio \
-  --copy-metadata httpx \
+  --copy-metadata httpx2 \
   --copy-metadata pydantic \
   --copy-metadata starlette \
   --copy-metadata uvicorn \
