@@ -5,7 +5,7 @@ description = "MCP proxy that aggregates multiple MCP servers behind 3 synthetic
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.141.1",
-    "fastmcp[code-mode]>=4.0.0b3",
+    "fastmcp[code-mode]",
     "mcp>=2.0",
     "py-key-value-aio[disk]",
     "textual>=0.83",
@@ -26,10 +26,16 @@ dev = [
     "pyyaml>=6.0",
 ]
 
-[tool.uv]
-# fastmcp 4.x is the first line that supports mcp 2.0; it is still in beta, so
-# resolution has to be allowed to pick a pre-release for it.
-prerelease = "allow"
+[tool.uv.sources]
+# fastmcp 4.x is the first line that supports mcp 2.0, and it is still in beta.
+# Pinning the tag rather than depending on `fastmcp>=4.0.0b3` from PyPI keeps
+# `prerelease = "allow"` out of this file: that setting is global, and a re-lock
+# under it pulled pre-release pydantic and beartype in as well. A git source is
+# exempt from the pre-release policy, so only fastmcp itself is pinned to a beta
+# and the lock records the exact commit.
+#
+# Swap this back to a plain PyPI dependency once fastmcp 4.0.0 ships stable.
+fastmcp = { git = "https://github.com/jlowin/fastmcp", tag = "v4.0.0b3" }
 
 [build-system]
 requires = ["hatchling"]
