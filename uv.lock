@@ -514,7 +514,7 @@ wheels = [
 [[package]]
 name = "fastmcp"
 version = "4.0.0b3"
-source = { git = "https://github.com/jlowin/fastmcp?tag=v4.0.0b3#37321449d91e3f3f3db321505a69126ac1b8601c" }
+source = { git = "https://github.com/PrefectHQ/fastmcp?tag=v4.0.0b3#37321449d91e3f3f3db321505a69126ac1b8601c" }
 dependencies = [
     { name = "fastmcp-slim", extra = ["client", "server"] },
 ]
@@ -527,7 +527,7 @@ code-mode = [
 [[package]]
 name = "fastmcp-slim"
 version = "4.0.0b3"
-source = { git = "https://github.com/jlowin/fastmcp?subdirectory=fastmcp_slim&tag=v4.0.0b3#37321449d91e3f3f3db321505a69126ac1b8601c" }
+source = { git = "https://github.com/PrefectHQ/fastmcp?subdirectory=fastmcp_slim&tag=v4.0.0b3#37321449d91e3f3f3db321505a69126ac1b8601c" }
 dependencies = [
     { name = "mcp-types" },
     { name = "platformdirs" },
@@ -943,7 +943,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
-    { name = "fastmcp", extras = ["code-mode"], git = "https://github.com/jlowin/fastmcp?tag=v4.0.0b3" },
+    { name = "fastmcp", extras = ["code-mode"], git = "https://github.com/PrefectHQ/fastmcp?tag=v4.0.0b3" },
     { name = "mcp", specifier = ">=2.0" },
     { name = "py-key-value-aio", extras = ["disk"] },
     { name = "textual", specifier = ">=0.83" },

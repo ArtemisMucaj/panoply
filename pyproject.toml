@@ -35,7 +35,7 @@ dev = [
 # and the lock records the exact commit.
 #
 # Swap this back to a plain PyPI dependency once fastmcp 4.0.0 ships stable.
-fastmcp = { git = "https://github.com/jlowin/fastmcp", tag = "v4.0.0b3" }
+fastmcp = { git = "https://github.com/PrefectHQ/fastmcp", tag = "v4.0.0b3" }
 
 [build-system]
 requires = ["hatchling"]
