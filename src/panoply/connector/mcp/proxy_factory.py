@@ -8,8 +8,10 @@ disabled tools, auth repair, the skills gate, and the search transform.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from fastmcp.client import Client
 from fastmcp.experimental.transforms.code_mode import CodeMode
 from fastmcp.mcp_config import MCPConfig, StdioMCPServer
 from fastmcp.server import FastMCP
@@ -17,6 +19,7 @@ from fastmcp.server.providers.proxy import (
     ProxyClient,
     ProxyProvider,
     StatefulProxyClient,
+    _mirror_front_era_mode,
 )
 
 from panoply.application.credentials import CredentialsService
@@ -30,6 +33,30 @@ from panoply.domain.policies.authentication import ToolOwnership
 from panoply.domain.ports.proxy import ProxyOptions
 
 log = logging.getLogger("panoply.proxy")
+
+
+def _mirroring_factory(base: ProxyClient) -> Callable[[], Client]:
+    """A per-request client factory that mirrors the front connection's era.
+
+    ``ProxyClient.new`` alone is not a usable factory: since the protocol-era
+    negotiation added in fastmcp 4, a backend client that never has its ``mode``
+    set sends requests without the ``_meta`` envelope the spec now requires, and
+    an HTTP backend rejects every ``list_tools`` with a 400. The stdio path is
+    unaffected because ``new_stateful`` derives its state from the live session.
+
+    This is the same thing ``fastmcp``'s own ``_create_client_factory`` does for
+    a non-``Client`` target; we only reimplement it because we build the clients
+    ourselves to control the stdio/HTTP split.
+    """
+
+    def factory() -> Client:
+        fresh = base.new()
+        mode = _mirror_front_era_mode()
+        if mode is not None:
+            fresh.mode = mode
+        return fresh
+
+    return factory
 
 
 @dataclass
@@ -132,7 +159,9 @@ class FastMCPProxyFactory:
                     getattr(backend, "url", "?"),
                     timeout,
                 )
-                factory = ProxyClient(transport, init_timeout=timeout).new
+                factory = _mirroring_factory(
+                    ProxyClient(transport, init_timeout=timeout)
+                )
 
             server.add_provider(ProxyProvider(factory), namespace=server_name)
 

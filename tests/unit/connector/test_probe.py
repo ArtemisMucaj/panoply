@@ -62,10 +62,9 @@ class TestSuppressMcpSessionWarning:
         )
 
     def test_demotes_mcp_errors_to_debug(self) -> None:
-        from mcp import McpError
-        from mcp.types import ErrorData
+        from mcp import MCPError
 
-        record = self._record(McpError(ErrorData(code=-32000, message="boom")))
+        record = self._record(MCPError(code=-32000, message="boom"))
         assert SuppressMcpSessionWarning().filter(record) is True
         assert record.levelno == logging.DEBUG
         assert record.levelname == "DEBUG"

@@ -98,10 +98,42 @@ class TestTransportSelection:
             factory.create(CATALOG, ProxyOptions(name="test"))
 
         # Catalog order: the stdio backend "gl", then the http backend "remote".
-        assert captured == [
-            stateful.return_value.new_stateful,
-            plain.return_value.new,
-        ]
+        stdio_factory, http_factory = captured
+        assert stdio_factory == stateful.return_value.new_stateful
+        # The http factory is wrapped to mirror the front connection's protocol
+        # era, so it is not ``new`` itself -- but calling it must still go
+        # through ``new``, i.e. a fresh connection per request.
+        plain.return_value.new.assert_not_called()
+        http_factory()
+        plain.return_value.new.assert_called_once()
+
+    def test_http_factory_mirrors_the_front_connection_era(
+        self, factory, stub_clients, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A backend client with no ``mode`` omits the required ``_meta`` envelope.
+
+        fastmcp 4 negotiates a protocol era per request; an HTTP backend answers
+        400 to every ``list_tools`` when the proxy's client never picked one, so
+        the whole backend silently vanishes from search. Regression test.
+        """
+        from fastmcp.server.providers.proxy import ProxyProvider
+
+        monkeypatch.setattr(
+            factory_module, "_mirror_front_era_mode", lambda: "2025-06-18"
+        )
+
+        captured: list = []
+        real_init = ProxyProvider.__init__
+
+        def capturing_init(self, client_factory, **kwargs):
+            captured.append(client_factory)
+            real_init(self, client_factory, **kwargs)
+
+        with patch.object(ProxyProvider, "__init__", capturing_init):
+            factory.create(CATALOG, ProxyOptions(name="test"))
+
+        fresh = captured[1]()
+        assert fresh.mode == "2025-06-18"
 
     def test_one_namespaced_provider_per_backend(self, factory, stub_clients) -> None:
         namespaces = []
