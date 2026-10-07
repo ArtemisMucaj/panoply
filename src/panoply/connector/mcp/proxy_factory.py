@@ -21,6 +21,7 @@ from fastmcp.server.providers.proxy import (
     StatefulProxyClient,
     _mirror_front_era_mode,
 )
+from fastmcp.server.transforms.visibility import Visibility
 
 from panoply.application.credentials import CredentialsService
 from panoply.connector.mcp.middleware import AuthErrorMiddleware, SkillsGateMiddleware
@@ -70,12 +71,20 @@ class FastMCPProxyServer:
 
     server: FastMCP
     clients: list[StatefulProxyClient] = field(default_factory=list)
+    #: Qualified names of hidden tools. The proxy's single ``Visibility``
+    #: transform holds this very set, so flipping a tool is a set edit: no
+    #: transform is appended per toggle, and the filter keeps its place ahead
+    #: of the search transform.
+    hidden: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        self.server.add_transform(Visibility(False, names=self.hidden))
 
     def enable_tool(self, qualified_name: str) -> None:
-        self.server.enable(names={qualified_name})
+        self.hidden.discard(qualified_name)
 
     def disable_tool(self, qualified_name: str) -> None:
-        self.server.disable(names={qualified_name})
+        self.hidden.add(qualified_name)
 
 
 class FastMCPProxyFactory:
@@ -104,7 +113,7 @@ class FastMCPProxyFactory:
         disabled = catalog.disabled_tool_names()
         if disabled:
             log.info("Disabled tools: %s", ", ".join(sorted(disabled)))
-            proxy.server.disable(names=set(disabled))
+            proxy.hidden.update(disabled)
 
         proxy.server.add_middleware(
             AuthErrorMiddleware(ToolOwnership.from_catalog(catalog), self.credentials)

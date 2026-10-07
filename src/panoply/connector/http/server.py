@@ -126,6 +126,7 @@ def serve_http(
             subprocesses restart as a result — unavoidable when the server set
             changes.
             """
+            nonlocal inner
             try:
                 rebuilt = container.proxy.build(options, source)
             except Exception as exc:
@@ -143,6 +144,7 @@ def serve_http(
                             await write_stream.aclose()
                         except Exception:
                             pass
+            inner = rebuilt
             provider.server = rebuilt.server
             log.info("Config reloaded")
             await broadcast_tools_changed(asgi_app)
@@ -150,13 +152,10 @@ def serve_http(
         async def flip_tool(server: str, tool: str, enabled: bool) -> None:
             """Show or hide one tool on the live proxy, leaving backends alone."""
             qualified = f"{server}_{tool}"
-            current = provider.server
-            # Directly modify tool visibility; enable/disable append a new
-            # Visibility transform on every call, so the list grows without
-            # bound.
-            tools = getattr(current, "_tools", {})
-            if qualified in tools:
-                tools[qualified]._enabled = enabled
+            if enabled:
+                inner.enable_tool(qualified)
+            else:
+                inner.disable_tool(qualified)
             await broadcast_tools_changed(asgi_app)
 
         # The API runs on its own thread, so its callbacks have to hop back
