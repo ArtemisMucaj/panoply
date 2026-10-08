@@ -45,6 +45,11 @@ logging.getLogger("fastmcp.client.transports.config").addFilter(
 )
 
 
+_silence_lock = threading.Lock()
+_silence_depth = 0
+_silence_saved: tuple | None = None
+
+
 @contextlib.contextmanager
 def silence(log_path: Path):
     """Redirect logging and stderr to the Panoply log file while probing.
@@ -52,23 +57,34 @@ def silence(log_path: Path):
     Backend libraries write connection noise straight to stderr, which in
     stdio mode is the channel the client is reading.
 
-    Uses thread-local storage for ``sys.stderr`` so parallel probes do not
-    corrupt each other's saved reference (the original bug: the last probe
-    out restored a handle already closed by an earlier probe).
+    ``sys.stderr`` is process-global and probes run concurrently on one event
+    loop, so their exits interleave. Overlapping probes therefore share one
+    redirection: the first in swaps the stream, the last out restores it. A
+    per-probe save/restore would let a later probe "restore" a file an earlier
+    one had already closed, leaving ``sys.stderr`` dead for the process.
     """
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a") as log_file:
-        local = threading.local()
-        local.old_stderr = sys.stderr
-        sys.stderr = log_file
-        handler = logging.StreamHandler(log_file)
-        handler.setLevel(logging.DEBUG)
-        logging.root.addHandler(handler)
-        try:
-            yield
-        finally:
-            sys.stderr = local.old_stderr
-            logging.root.removeHandler(handler)
+    global _silence_depth, _silence_saved
+    with _silence_lock:
+        if _silence_depth == 0:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = open(log_path, "a")
+            handler = logging.StreamHandler(log_file)
+            handler.setLevel(logging.DEBUG)
+            logging.root.addHandler(handler)
+            _silence_saved = (sys.stderr, log_file, handler)
+            sys.stderr = log_file
+        _silence_depth += 1
+    try:
+        yield
+    finally:
+        with _silence_lock:
+            _silence_depth -= 1
+            if _silence_depth == 0:
+                original, log_file, handler = _silence_saved
+                _silence_saved = None
+                sys.stderr = original
+                logging.root.removeHandler(handler)
+                log_file.close()
 
 
 class FastMCPToolProbe:

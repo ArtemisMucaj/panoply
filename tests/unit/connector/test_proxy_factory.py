@@ -8,7 +8,7 @@ import pytest
 from fastmcp.server import FastMCP
 
 from panoply.connector.mcp import proxy_factory as factory_module
-from panoply.connector.mcp.proxy_factory import FastMCPProxyFactory
+from panoply.connector.mcp.proxy_factory import FastMCPProxyFactory, FastMCPProxyServer
 from panoply.connector.mcp.search_transform import PanoplySearchTransform
 from panoply.connector.settings import Settings
 from panoply.domain.model.catalog import ServerCatalog
@@ -157,18 +157,45 @@ class TestAssembly:
         catalog = ServerCatalog.from_payload(
             {"mcpServers": {"gl": {"command": "npx", "disabledTools": ["noisy"]}}}
         )
-        disabled: list = []
-        with patch.object(
-            FastMCP, "disable", lambda self, names: disabled.append(names)
-        ):
-            factory.create(catalog, ProxyOptions(name="test"))
-        assert disabled == [{"gl_noisy"}]
+        built = factory.create(catalog, ProxyOptions(name="test"))
+        assert built.hidden == {"gl_noisy"}
 
-    def test_a_live_proxy_can_flip_one_tool(self, factory, stub_clients) -> None:
-        built = factory.create(CATALOG, ProxyOptions(name="test"))
-        with patch.object(built.server, "enable") as enable:
-            built.enable_tool("gl_noisy")
-        enable.assert_called_once_with(names={"gl_noisy"})
+    async def test_a_live_proxy_can_flip_one_tool(self) -> None:
+        """The HTTP host hides and shows tools on the running proxy.
+
+        Exercised against a real FastMCP server: the previous implementation
+        poked a private attribute fastmcp 4 no longer has, so every live
+        toggle was a silent no-op until the next restart.
+        """
+        server = FastMCP("t")
+
+        @server.tool
+        def noisy() -> str:
+            return "x"
+
+        @server.tool
+        def quiet() -> str:
+            return "y"
+
+        built = FastMCPProxyServer(server)
+
+        async def visible() -> set[str]:
+            return {tool.name for tool in await server.list_tools()}
+
+        assert await visible() == {"noisy", "quiet"}
+        built.disable_tool("noisy")
+        assert await visible() == {"quiet"}
+        built.enable_tool("noisy")
+        assert await visible() == {"noisy", "quiet"}
+
+    def test_flipping_does_not_grow_the_transform_chain(self) -> None:
+        server = FastMCP("t")
+        built = FastMCPProxyServer(server)
+        before = len(server._transforms)
+        for _ in range(10):
+            built.disable_tool("a")
+            built.enable_tool("a")
+        assert len(server._transforms) == before
 
     def test_search_transform_carries_the_server_descriptions(
         self, factory, stub_clients

@@ -16,6 +16,12 @@ echo "==> Building panoply binary with PyInstaller (macOS)..."
 
 mkdir -p "$OUT_DIR"
 
+# Code mode spawns pydantic-monty's `monty` worker executable, which the
+# pydantic-monty-runtime wheel installs into the venv's scripts directory.
+# Bundle it; scripts/pyinstaller_monty_hook.py points MONTY_BIN at it.
+MONTY_BIN_PATH="$(uv run python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')/monty"
+[[ -x "$MONTY_BIN_PATH" ]] || { echo "ERROR: monty worker binary not found at $MONTY_BIN_PATH"; exit 1; }
+
 uv run --with 'pyinstaller==6.19.0' pyinstaller \
   --onefile \
   --name panoply \
@@ -33,6 +39,9 @@ uv run --with 'pyinstaller==6.19.0' pyinstaller \
   --copy-metadata textual \
   --copy-metadata pydantic-monty \
   --hidden-import pydantic_monty \
+  --hidden-import pydantic_monty._binary \
+  --add-binary "$MONTY_BIN_PATH:." \
+  --runtime-hook "$REPO_ROOT/scripts/pyinstaller_monty_hook.py" \
   "$REPO_ROOT/src/panoply/__main__.py"
 
 echo "==> Done. Binary at: $OUT_DIR/panoply"

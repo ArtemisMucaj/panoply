@@ -110,6 +110,28 @@ class TestSilence:
         assert sys.stderr is original
         assert list(logging.getLogger().handlers) == before
 
+    def test_overlapping_probes_restore_the_original_stream(
+        self, settings: Settings
+    ) -> None:
+        """Probes run concurrently on one event loop, so exits interleave.
+
+        The first probe out used to close its file while the second still
+        held it as the "original", leaving ``sys.stderr`` closed for good —
+        after which logging and every stdio backend spawn failed.
+        """
+        original = sys.stderr
+        before = list(logging.getLogger().handlers)
+        first, second = silence(settings.log_path), silence(settings.log_path)
+        first.__enter__()
+        second.__enter__()
+        first.__exit__(None, None, None)
+        assert not sys.stderr.closed
+        print("still swallowed", file=sys.stderr)
+        second.__exit__(None, None, None)
+        assert sys.stderr is original
+        assert list(logging.getLogger().handlers) == before
+        assert "still swallowed" in settings.log_path.read_text()
+
 
 class TestProbe:
     @pytest.fixture
