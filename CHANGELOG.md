@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ArtemisMucaj/panoply/compare/v0.2.0...v0.2.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* upgrade to fastmcp 4.0.11 and fix live tool toggles ([#21](https://github.com/ArtemisMucaj/panoply/issues/21)) ([cf1c518](https://github.com/ArtemisMucaj/panoply/commit/cf1c518c79c59dbdb091852476bab672e4843119))
+
 ## [0.2.0](https://github.com/ArtemisMucaj/panoply/compare/v0.1.3...v0.2.0) (2026-08-21)
 
 
